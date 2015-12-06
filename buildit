@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+
+OS=`uname`
+HOSTARCH=`uname -m`
+PARALLEL=
+FETCH=0
+QUIET=0
+GNU_FTP=ftp://ftp.gnu.org/gnu
+SOURCEWARE_FTP=ftp://sourceware.org/pub
+SOURCEWARE_GIT=git://sourceware.org/git
+NEWLIB_GITREPO=newlib-cygwin.git
+ARCHIVES=archives
+#PATCHES=./patches/
+# Get absolute path, will spawn a subshell then exit so our pwd is retained
+SCRIPTROOT=$(cd "$(dirname $0)" && pwd)
+
+# Cause errors in pipes to return failure when necessary
+set -o pipefail
+
+# source common functions
+. commonfuncs
+
+trap err ERR
+
+function help()
+{
+    echo "Options"
+    echo " -a <arch list>               architectures to build"
+    echo "    example: -a 'arm' or -a 'arm i386 x86_64' for multiple"
+    echo " -c                           use compilation cache (ccache must be installed)"
+    echo " -f                           fetch source releases from upstream"
+    echo " -h|-?                        display this help message"
+    echo " -j<#>                        use <#> parallel workers to build"
+    echo " -q                           make the build quieter"
+	echo ""
+	echo "Notes"
+	echo "    Define versions in toolvers file."
+	echo "    If (and only if) NEWLIBVER is defined in toolvers, newlib will be included in the build."
+	echo "    NEWLIBVER can be set to 'git' to indicate the latest version should be fetched through git."
+	echo "    After building, one can move the output directory to wherever desired (e.g. /opt/xxx-toolchain)."
+	echo ""
+    exit 1
+}
+
+if [ "$OS" = "Linux" ]; then
+    COUNT=`grep processor /proc/cpuinfo | wc -l`
+    PARALLEL=-j`expr $COUNT + $COUNT`
+fi
+if [ "$OS" = "Darwin" ]; then
+    export CPPFLAGS=-I/opt/local/include
+    export LDFLAGS=-L/opt/local/lib
+    export CXXFLAGS="-fbracket-depth=1024"
+fi
+if [ "$OS" = "FreeBSD" ]; then
+    export CPPFLAGS=-I/usr/local/include
+    export LDFLAGS=-L/usr/local/lib
+fi
+MAKE=make
+if [ "$OS" = "FreeBSD" ]; then
+    MAKE=gmake
+fi
+if [ "$HOSTARCH" = "amd64" ]; then
+    HOSTARCH=x86_64
+fi
+
+if [ $# == "0" ]; then
+    help
+fi
+
+while getopts a:cfhj:q? arg
+do
+    case $arg in
+        a ) ARCHES=$OPTARG ;;
+        c ) CCACHE=1 ;;
+        f ) FETCH=1 ;;
+        j ) PARALLEL="-j$OPTARG" ;;
+        h ) help ;;
+        q ) QUIET=1 ;;
+        ? ) help ;;
+        * ) echo "unrecognized option '$arg'" ; exit 1 ;;
+    esac
+done
+
+
+if [ -z "$ARCHES" ]; then
+    echo need to specify architectures to build
+    echo ie -a "arm sh"
+    exit 1
+fi
+
+if [ -z $(which makeinfo) ]; then
+    echo makeinfo not found. On debian/ubuntu this is provided by the texinfo package.
+    exit 1
+fi
+
+export CC="cc"
+export CXX="c++"
+
+if [ "$CCACHE" = "1" ]; then
+export CC="ccache $CC"
+export CXX="ccache $CXX"
+fi
+
+log echo "building all the things! begun at `date`"
+log echo "ARCHES='$ARCHES' PARALLEL='$PARALLEL' FETCH='$FETCH' CCACHE='$CCACHE' NEWLIB='$NEWLIB'"
+# load GCCVER and BINVER
+. toolvers
+
+if [ "$FETCH" = "1" ]; then
+	./getit -f
+fi
+
+if [ ! -f .extracted-stamp ]; then
+    extract-tool binutils $BINVER .bz2 $PATCHES/binutils-patch.txt
+    extract-tool gcc $GCCVER .bz2 $PATCHES/gcc-patch.txt
+    extract-tool gdb $GDBVER .xz $PATCHES/gdb-patch.txt
+    extract-tool gmp $GMPVER .bz2
+    extract-tool mpc $MPCVER .gz
+    extract-tool mpfr $MPFRVER .bz2
+	if [ ! -z "$NEWLIBVER" && "$NEWLIBVER" != "git" ]; then
+		extract-tool newlib $NEWLIBVER .gz
+	fi
+    touch .extracted-stamp
+fi
+
+# link the last three libs into gcc
+pushd gcc-$GCCVER
+ln -sf ../gmp-$GMPVER gmp
+ln -sf ../mpc-$MPCVER mpc
+ln -sf ../mpfr-$MPFRVER mpfr
+if [ -d ../newlib-$NEWLIBVER ]; then
+	ln -sf ../newlib-$NEWLIBVER/newlib newlib
+	ln -sf ../newlib-$NEWLIBVER/libgloss libgloss
+fi
+popd
+
+for ARCH in $ARCHES; do
+    echo building for arch \"$ARCH\"
+    if [ "$ARCH" == "arm" ]; then
+        TARGET=arm-eabi
+    else
+        TARGET=$ARCH-elf
+    fi
+
+    INSTALLPATH=`pwd`/$TARGET-$GCCVER-$OS-$HOSTARCH
+    BINBUILDPATH=build-binutils-$BINVER-$ARCH-$OS-$HOSTARCH
+    GCCBUILDPATH=build-gcc-$GCCVER-$ARCH-$OS-$HOSTARCH
+    GDBBUILDPATH=build-gdb-$GDBVER-$ARCH-$OS-$HOSTARCH
+	NEWLIBBUILDPATH=build-newlib-$NEWLIBVER-$ARCH-$OS-$HOSTARCH
+    export PATH=$INSTALLPATH/bin:$PATH
+
+    # Building Binutils
+    if [ ! -f $BINBUILDPATH/built.txt ]; then
+        echo building binutils
+        mkdir -p $BINBUILDPATH
+        pushd $BINBUILDPATH
+        log ../binutils-$BINVER/configure --target=$TARGET --prefix=$INSTALLPATH --disable-werror --disable-nls
+        log $MAKE $PARALLEL
+        log $MAKE install
+        touch built.txt
+        popd
+    fi
+
+    # Building GCC
+    if [ ! -f $GCCBUILDPATH/built.txt ]; then
+        echo building gcc
+        ARCH_OPTIONS=
+
+        mkdir -p $GCCBUILDPATH
+        pushd $GCCBUILDPATH
+        log ../gcc-$GCCVER/configure --target=$TARGET --prefix=$INSTALLPATH --enable-languages=c,c++,lto $ARCH_OPTIONS --disable-werror --disable-nls --with-newlib
+        log $MAKE all-gcc $PARALLEL
+        log $MAKE all-target-libgcc $PARALLEL
+        log $MAKE install-gcc
+        log $MAKE install-target-libgcc
+        touch built.txt
+        popd
+    fi
+
+	# Building newlib
+	if [ ! -f $NEWLIBBUILDPATH/built.txt ]; then
+		echo building newlib
+		ARCH_OPTIONS="--enable-newlib-nano-malloc --enable-newlib-io-c99-formats --disable-newlib-io-float --disable-newlib-supplied-syscalls"
+
+		mkdir -p $NEWLIBBUILDPATH
+		pushd $NEWLIBBUILDPATH
+		log ../newlib-$NEWLIBVER/configure --target=$TARGET --prefix=$INSTALLPATH $ARCH_OPTIONS --disable-shared --enable-languages=c,c++
+		log $MAKE all-target $PARALLEL
+		log $MAKE install-target-newlib
+		log $MAKE install-target-libgloss
+		touch built.txt
+		popd
+	fi
+
+	# Building gdb
+    if [ ! -f $GDBBUILDPATH/built.txt ]; then
+        echo building gdb
+        mkdir -p $GDBBUILDPATH
+        pushd $GDBBUILDPATH
+        log ../gdb-$GDBVER/configure --target=$TARGET --prefix=$INSTALLPATH --disable-werror --disable-nls
+        log make $PARALLEL
+        log make install
+        touch built.txt
+        popd
+    fi
+done
+
+echo all done
+

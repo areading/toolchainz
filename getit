@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+
+OS=`uname`
+HOSTARCH=`uname -m`
+FETCH=0
+QUIET=0
+GNU_FTP=ftp://ftp.gnu.org/gnu
+SOURCEWARE_FTP=ftp://sourceware.org/pub
+SOURCEWARE_GIT=git://sourceware.org/git
+NEWLIB_GITREPO=newlib-cygwin.git
+ARCHIVES=archives
+# Get absolute path, will spawn a subshell then exit so our pwd is retained
+SCRIPTROOT=$(cd "$(dirname $0)" && pwd)
+
+# Cause errors in pipes to return failure when necessary
+set -o pipefail
+
+# Pull in common funcs
+. commonfuncs
+
+trap err ERR
+
+function help()
+{
+    echo "Options"
+    echo " -c                           clean up downloaded archives"
+    echo " -f                           fetch source releases from upstream"
+    echo " -h|-?                        display this help message"
+	echo ""
+	echo "This file is automatically called when -f is passed to the buildit script. It should be"
+	echo "unnecessary to use this script directly."
+	echo ""
+    exit 1
+}
+
+
+if [ $# == "0" ]; then
+    help
+fi
+
+
+while getopts cfh? arg
+do
+    case $arg in
+        c ) UNFETCH=1 ;;
+        f ) FETCH=1 ;;
+        h ) help ;;
+        ? ) help ;;
+        * ) echo "unrecognized option '$arg'" ; exit 1 ;;
+    esac
+done
+
+# load *VER
+. toolvers
+
+declare -a PKGS
+GNU_PKGS=("binutils-$BINVER.tar.bz2" "gcc-$GCCVER.tar.bz2" "gdb-$GDBVER.tar.xz" "mpfr-$MPFRVER.tar.bz2" "mpc-$MPCVER.tar.gz" "gmp-$GMPVER.tar.bz2")
+
+if [ "$FETCH" = "1" ]; then
+	echo getting all the things
+	for pkg in "${GNU_PKGS[@]}"; do
+		if [ ! -f $ARCHIVES/$pkg ]; then
+			echo fetching $pkg
+			log wget -P $ARCHIVES -N $GNU_FTP/${pkg/-*/}/$pkg
+		fi
+	done
+
+	if [ "$NEWLIBVER" == "git" ]; then
+		git-fetch-update "newlib-$NEWLIBVER" "$SOURCEWARE_GIT/$NEWLIB_GITREPO"
+	elif [ ! -z "$NEWLIBVER" && ! -f $ARCHIVES/newlib-$NEWLIBVER.tar.gz ]; then
+		echo fetching newlib-$NEWLIBVER
+		log wget -P $ARCHIVES -N $SOURCEWARE_FTP/newlib/newlib-$NEWLIBVER.tar.gz
+	fi
+
+elif [ "$UNFETCH" -eq 1 ]; then
+	echo getting rid of all the things
+	for pkg in "${GNU_PKGS[@]}"; do
+		rm -f $ARCHIVES/$pkg
+	done
+	if [ "$NEWLIBVER" != "git" ]; then
+		rm -f $ARCHIVES/newlib-$NEWLIBVER.tar.gz
+	fi
+	for i in `ls $ARCHIVES`; do
+   		echo $i
+	done
+
+	ARCHIVESDIR="$(ls $ARCHIVES)"
+	if [[ -d "$ARCHIVES" && "${#ARCHIVESDIR}" -eq 0 ]]; then
+		rmdir $ARCHIVES
+	fi
+
+	rm -f build.log
+	rm -rf build-*
+	rm -rf gcc-$GCCVER
+	rm -rf binutils-$BINVER
+	rm -rf gdb-$GDBVER
+	rm -rf gmp-$GMPVER
+	rm -rf mpc-$MPCVER
+	rm -rf mpfr-$MPFRVER
+	rm -rf newlib-$NEWLIBVER
+	rm -f .extracted-stamp
+fi
+
+

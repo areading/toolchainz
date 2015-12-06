@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+
+function err() {
+    echo "buildit: error during build"
+    if [ "$QUIET" = "1" ]; then
+        echo "buildit: dumping last 50 lines of build log..."
+        echo "buildit: see $SCRIPTROOT/build.log for the full details"
+        tail -50 $SCRIPTROOT/build.log
+    fi
+    exit 1
+}
+
+function log()
+{
+    if [ "$QUIET" = "1" ]; then
+        "$@" >> $SCRIPTROOT/build.log 2>&1
+    else
+        "$@" 2>&1 | tee -a $SCRIPTROOT/build.log
+    fi
+}
+
+function extract-tool()
+{
+    #echo "extract-tool " $1 $2 $3 $4
+
+    TARFILE=${1}-${2}.tar$3
+    TARGETDIR=${1}-${2}
+    if [ -f ${TARGETDIR}/.extracted ]; then
+        log echo "$TARFILE already extracted into $TARGETDIR, skipping"
+        return 0
+    fi
+    if [ ! -f $ARCHIVES/$TARFILE ]; then
+        log echo "error, missing $TARFILE"
+        exit 1
+    fi
+
+    echo extracting $TARFILE
+    rm -rf $TARGETDIR
+    tar xf $ARCHIVES/$TARFILE || exit 1
+
+    if [ ! -z "$4" ]; then
+        log echo patching $1
+        log patch -d $TARGETDIR -p1 < $4 || exit 1
+    fi
+
+    touch $TARGETDIR/.extracted || exit 1
+}
+
+function git-fetch-update()
+{
+	REPONAME=${1}
+	FETCHPATH=${2}
+
+	if [ ! -d "$REPONAME" ]; then
+		echo cloning git $REPONAME
+		log git clone "$FETCHPATH" "$REPONAME"
+	else
+		echo fetching git $REPONAME
+		log $(cd "$REPONAME" && git fetch && git pull)
+	fi
+}
+
