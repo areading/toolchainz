@@ -54,7 +54,7 @@ done
 . toolvers
 
 declare -a PKGS
-GNU_PKGS=("binutils-$BINVER.tar.bz2" "gcc-$GCCVER.tar.bz2" "gdb-$GDBVER.tar.xz" "mpfr-$MPFRVER.tar.bz2" "mpc-$MPCVER.tar.gz" "gmp-$GMPVER.tar.bz2")
+GNU_PKGS=("binutils-$BINVER.tar.bz2" "gdb-$GDBVER.tar.xz" "mpfr-$MPFRVER.tar.bz2" "mpc-$MPCVER.tar.gz" "gmp-$GMPVER.tar.bz2")
 
 if [ "$FETCH" = "1" ]; then
 	echo getting all the things
@@ -64,6 +64,13 @@ if [ "$FETCH" = "1" ]; then
 			log wget -P $ARCHIVES -N $GNU_FTP/${pkg/-*/}/$pkg
 		fi
 	done
+
+	# GCC is in its own subdir...
+	pkg="gcc-$GCCVER.tar.bz2"
+	if [ ! -f $ARCHIVES/$pkg ]; then
+		echo fetching $pkg
+		log wget -P $ARCHIVES -N $GNU_FTP/${pkg/-*/}/${pkg/-*/}-$GCCVER/$pkg
+	fi
 
 	if [ "$NEWLIBVER" == "git" ]; then
 		git-fetch-update "newlib-$NEWLIBVER" "$SOURCEWARE_GIT/$NEWLIB_GITREPO"
