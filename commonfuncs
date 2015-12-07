@@ -56,7 +56,7 @@ function git-fetch-update()
 		log git clone "$FETCHPATH" "$REPONAME"
 	else
 		echo fetching git $REPONAME
-		log $(cd "$REPONAME" && git fetch && git pull)
+		log sh -c "cd '$REPONAME' && git fetch && git pull"
 	fi
 }
 
