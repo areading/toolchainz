@@ -111,9 +111,9 @@ if [ "$FETCH" = "1" ]; then
 fi
 
 if [ ! -f .extracted-stamp ]; then
-    extract-tool binutils $BINVER .bz2 $PATCHES/binutils-patch.txt
-    extract-tool gcc $GCCVER .bz2 $PATCHES/gcc-patch.txt
-    extract-tool gdb $GDBVER .xz $PATCHES/gdb-patch.txt
+    extract-tool binutils $BINVER .bz2 #$PATCHES/binutils-patch.txt
+    extract-tool gcc $GCCVER .bz2 #$PATCHES/gcc-patch.txt
+    extract-tool gdb $GDBVER .xz #$PATCHES/gdb-patch.txt
     extract-tool gmp $GMPVER .bz2
     extract-tool mpc $MPCVER .gz
     extract-tool mpfr $MPFRVER .bz2
